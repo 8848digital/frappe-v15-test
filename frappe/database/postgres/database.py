@@ -1,6 +1,8 @@
 import re
 
 import psycopg2
+from psycopg2 import pool
+import threading
 import psycopg2.extensions
 from psycopg2.errorcodes import (
 	CLASS_INTEGRITY_CONSTRAINT_VIOLATION,
@@ -121,6 +123,21 @@ class PostgresExceptionUtil:
 	def is_interface_error(e):
 		return isinstance(e, InterfaceError)
 
+class ConnectionPool:
+	_connection_pool = None
+	_lock = threading.Lock()
+
+	@classmethod
+	def get_connection_pool(cls, conn_settings = {}):
+		with cls._lock:  
+			if cls._connection_pool is None and conn_settings:
+				print("Initializing Connection Pool")
+				cls._connection_pool = pool.ThreadedConnectionPool(
+					minconn=5,
+					maxconn=100,
+					**conn_settings
+				)
+		return cls._connection_pool
 
 class PostgresDatabase(PostgresExceptionUtil, Database):
 	REGEX_CHARACTER = "~"
@@ -168,6 +185,22 @@ class PostgresDatabase(PostgresExceptionUtil, Database):
 	@property
 	def last_query(self):
 		return LazyDecode(self._cursor.query)
+	
+	def close(self):
+		"""Close database connection."""
+		if self._conn:
+			connection_pool = ConnectionPool.get_connection_pool()
+			if connection_pool:
+				connection_pool.putconn(self._conn)
+			else:
+				self._conn.close()
+			self._cursor = None
+			self._conn = None
+	
+	def close_all_connections(self):
+		connection_pool = ConnectionPool.get_connection_pool()
+		if connection_pool:
+			connection_pool.closeall()
 
 	def get_connection(self):
 		conn_settings = {
@@ -178,10 +211,11 @@ class PostgresDatabase(PostgresExceptionUtil, Database):
 		}
 		if self.port:
 			conn_settings["port"] = self.port
+		
+		connection_pool = ConnectionPool.get_connection_pool(conn_settings)
 
-		conn = psycopg2.connect(**conn_settings)
+		conn = connection_pool.getconn()
 		conn.set_isolation_level(ISOLATION_LEVEL_REPEATABLE_READ)
-
 		return conn
 
 	def set_execution_timeout(self, seconds: int):
