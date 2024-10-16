@@ -377,7 +377,9 @@ def export_query():
 	if add_totals_row:
 		ret = append_totals_row(ret)
 
-	fields_info = get_field_info(db_query.fields, doctype)
+	cleaned_fields = [field.split('cast(')[-1].split(' as ')[0].strip() if 'cast(' in field else field
+	for field in db_query.fields ]
+	fields_info = get_field_info(cleaned_fields, doctype)
 
 	labels = [info["label"] for info in fields_info]
 	data = [[_("Sr"), *labels]]
@@ -395,7 +397,7 @@ def export_query():
 			processed_data.append(processed_row)
 			data.extend(processed_data)
 
-	data = handle_duration_fieldtype_values(doctype, data, db_query.fields)
+	data = handle_duration_fieldtype_values(doctype, data,cleaned_fields)
 
 	if file_format_type == "CSV":
 		from frappe.utils.xlsxutils import handle_html
